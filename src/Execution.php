@@ -78,6 +78,7 @@ final class Execution implements Run
             }
             $kept = $row;
         }
+        $this->assertKind($name, 'signal', $kept);
         return Runs::decode((string) $kept['result'])['value'];
     }
 
@@ -105,12 +106,22 @@ final class Execution implements Run
         }
         $this->used[$name] = true;
         $kept = $this->kept[$name] ?? null;
-        if ($kept !== null && $kept['kind'] !== $kind) {
+        if ($kept !== null) {
+            $this->assertKind($name, $kind, $kept);
+        }
+        return $kept;
+    }
+
+    /**
+     * @param array{kind: string, result: ?string, wake_at: ?int} $kept
+     */
+    private function assertKind(string $name, string $kind, array $kept): void
+    {
+        if ($kept['kind'] !== $kind) {
             throw new \LogicException(
                 "Run {$this->id} used \"{$name}\" as a {$kind}, and it was kept as a {$kept['kind']}. A run must take the same steps each time it is resumed.",
             );
         }
-        return $kept;
     }
 
     /**
@@ -160,6 +171,7 @@ final class Execution implements Run
         $kept = $this->read($name) ?? throw new \LogicException(
             "The step \"{$name}\" of run {$this->id} was kept and is gone.",
         );
+        $this->assertKind($name, $kind, $kept);
         $this->kept[$name] = $kept;
         return $kind === 'sleep' ? ['wake_at' => $kept['wake_at']] : Runs::decode((string) $kept['result']);
     }

@@ -74,6 +74,22 @@ final readonly class Returns
     }
 }
 
+final readonly class InvalidResultRun
+{
+    public function handle(Run $run): mixed
+    {
+        return NAN;
+    }
+}
+
+final readonly class CancelledRun
+{
+    public function handle(Run $run, Cancellation $cancellation): void
+    {
+        $cancellation->throwIfCancelled();
+    }
+}
+
 final readonly class Twice
 {
     public function handle(Run $run): void
@@ -253,7 +269,7 @@ final class RunsTest extends TestCase
     {
         $this->directory = sys_get_temp_dir() . '/crab-runs-' . bin2hex(random_bytes(6));
         mkdir($this->directory);
-        // On the MySQL server of tests/linux/run.sh --mysql when there is one, and SQLite otherwise.
+        // Use the configured test MySQL database when given, and SQLite otherwise.
         $dsn = getenv('CRAB_TEST_MYSQL_DSN');
         $this->db = new Database(fn(): \PDO => is_string($dsn)
             ? new \PDO($dsn, getenv('CRAB_TEST_MYSQL_USER') ?: 'root', getenv('CRAB_TEST_MYSQL_PASSWORD') ?: '')
@@ -291,6 +307,13 @@ final class RunsTest extends TestCase
         $this->db->close();
         array_map(unlink(...), glob($this->directory . '/*') ?: []);
         rmdir($this->directory);
+    }
+
+    public function testRunsRejectANegativeBackoffBeforeAWorkerCanLoopItImmediately(): void
+    {
+        self::expectException(\InvalidArgumentException::class);
+
+        new Runs($this->db, new Queue($this->store), backoff: [-1]);
     }
 
     public function testARunGoesOnFromWhereItWasAndDoesEachStepOnce(): void
@@ -398,6 +421,23 @@ final class RunsTest extends TestCase
         self::assertSame([Status::Completed, 'current quote'], [$done?->status, $done?->result]);
     }
 
+    public function testASignalSentWhileAStepRunsCannotReplaceTheStepsResult(): void
+    {
+        RacedStepRun::$calls = 0;
+        $id = $this->runs->start(RacedStepRun::class);
+        $fiber = new \Fiber(fn() => $this->runs->resume($id));
+        $fiber->start();
+        try {
+            self::assertTrue($this->runs->signal($id, 'quote', 'a signal, not a quote'));
+        } finally {
+            $fiber->resume();
+        }
+
+        $state = $this->runs->find($id);
+        self::assertSame([Status::Pending, 1, null], [$state?->status, $state?->attempts, $state?->result]);
+        self::assertStringContainsString('kept as a signal', (string) $state?->error);
+    }
+
     public function testAWorkerThatOnlyStalledWritesNothingOnceItsRunIsRetried(): void
     {
         RacedStepRun::$calls = 0;
@@ -443,6 +483,29 @@ final class RunsTest extends TestCase
         );
         $runs = $app->container->get(Runs::class);
         self::assertSame(600, new \ReflectionProperty(Runs::class, 'retryAfter')->getValue($runs));
+    }
+
+    public function testWithinKeepsTheRecoveryDelayForASupervisorsReservation(): void
+    {
+        $runs = new Runs($this->db, new Queue($this->store, clock: $this->clock), clock: $this->clock, retryAfter: 600);
+        $id = $runs->start(Returns::class);
+        $this->lose();
+        $this->db
+            ->table('runs')
+            ->where('id', $id)
+            ->update([
+                'status' => Status::Running->value,
+                'claim' => 'stalled',
+                'lease_until' => $this->clock->now()->getTimestamp(),
+            ]);
+        $scoped = $this->db->transaction(static fn(Connection $db) => $runs->within($db));
+
+        $this->clock->advance('+181 seconds');
+        self::assertSame(0, $scoped->recover(), 'The supervisor may still hold the job.');
+        self::assertSame([Status::Running, 0], [$runs->find($id)?->status, $runs->find($id)?->attempts]);
+        $this->clock->advance('+510 seconds');
+        self::assertSame(1, $scoped->recover());
+        self::assertSame([Status::Pending, 1], [$runs->find($id)?->status, $runs->find($id)?->attempts]);
     }
 
     public function testAWakingJobTakenBeforeItsPushReturnsLeavesTheRunToBeWokenAgain(): void
@@ -685,6 +748,97 @@ final class RunsTest extends TestCase
         self::assertSame('2026-10-30 09:00:00.000000', $this->runs->find($id)?->result['date'] ?? null);
     }
 
+    public function testAnUnserialisableHandleResultFailsTheTryInsteadOfLeavingTheRunRunning(): void
+    {
+        $id = $this->runs->start(InvalidResultRun::class);
+
+        self::assertTrue($this->work());
+        $state = $this->runs->find($id);
+
+        self::assertSame([Status::Pending, 1], [$state?->status, $state?->attempts]);
+        self::assertStringContainsString('cannot be', (string) $state?->error);
+        self::assertFalse($this->work());
+        $this->clock->advance('+30 seconds');
+        self::assertTrue($this->work());
+        self::assertSame([Status::Failed, 2], [
+            $this->runs->find($id)?->status,
+            $this->runs->find($id)?->attempts,
+        ]);
+        self::assertSame([], $this->store->failed());
+    }
+
+    public function testAnErrorLoadingStepsEndsTheLeaseRenewal(): void
+    {
+        $id = $this->runs->start(Returns::class);
+        $db = $this->createStub(Connection::class);
+        $db->method('table')->willReturnCallback(function (
+            string|\Crab\Contracts\Database\Query $table,
+            ?string $as = null,
+        ): \Crab\Contracts\Database\Query {
+            if ($table === 'run_steps') {
+                throw new \RuntimeException('The steps could not be read.');
+            }
+            return $this->db->table($table, $as);
+        });
+        $runs = new Runs($db, new Queue($this->store), clock: $this->clock);
+        $loop = \Crab\Engine\EventLoop::current();
+        $before = $loop->getIdentifiers();
+        $failure = null;
+        try {
+            $runs->resume($id);
+        } catch (\RuntimeException $error) {
+            $failure = $error;
+        } finally {
+            $left = array_values(array_diff($loop->getIdentifiers(), $before));
+            foreach ($left as $watcher) {
+                $loop->cancel($watcher);
+            }
+        }
+
+        self::assertSame([], $left, 'A failed resumption left a task renewing its lease.');
+        self::assertNull($failure);
+        self::assertSame([Status::Pending, 1], [
+            $this->runs->find($id)?->status,
+            $this->runs->find($id)?->attempts,
+        ]);
+    }
+
+    public function testAJobTimeoutCountsAgainstTheRunsTries(): void
+    {
+        $id = $this->runs->start(CancelledRun::class);
+        $this->lose();
+        for ($attempt = 1; $attempt <= 2; ++$attempt) {
+            $cancellation = new Cancellation();
+            $cancellation->cancel(new \Crab\Contracts\Queue\TimedOut(1));
+            $this->runs->resume($id, $cancellation);
+            $state = $this->runs->find($id);
+
+            self::assertSame($attempt, $state?->attempts);
+            self::assertSame($attempt === 1 ? Status::Pending : Status::Failed, $state?->status);
+            self::assertStringContainsString('TimedOut', (string) $state?->error);
+            $this->clock->advance('+30 seconds');
+        }
+    }
+
+    public function testAWorkerCancellationReleasesTheRunWithoutCountingAFailure(): void
+    {
+        $id = $this->runs->start(CancelledRun::class);
+        $cancellation = new Cancellation();
+        $cancellation->cancel();
+        $failure = null;
+        try {
+            $this->runs->resume($id, $cancellation);
+        } catch (\Crab\Engine\Async\CancelledException $error) {
+            $failure = $error;
+        }
+
+        self::assertNotNull($failure);
+        self::assertSame([Status::Pending, 0], [
+            $this->runs->find($id)?->status,
+            $this->runs->find($id)?->attempts,
+        ]);
+    }
+
     public function testAStepNameUsedTwiceInOneTryFailsTheRun(): void
     {
         $id = $this->runs->start(Twice::class);
@@ -798,9 +952,6 @@ final class RunsTest extends TestCase
     }
 
     /**
-     * Runs every job that is due now, as a worker would; false when there was none.
-     */
-    /**
      * Takes every job off the queue without running it.
      */
     private function lose(): void
@@ -810,6 +961,9 @@ final class RunsTest extends TestCase
         }
     }
 
+    /**
+     * Runs every job that is due now, as a worker would; false when there was none.
+     */
     private function work(): bool
     {
         $any = false;

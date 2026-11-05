@@ -7,6 +7,7 @@ namespace Crab\Runs;
 use Crab\Contracts\Container\Container;
 use Crab\Contracts\Database\Connection;
 use Crab\Contracts\Queue\Queue;
+use Crab\Contracts\Queue\TimedOut;
 use Crab\Contracts\Runs\Run;
 use Crab\Contracts\Runs\Runs as RunsContract;
 use Crab\Contracts\Runs\RunState;
@@ -59,8 +60,18 @@ final class Runs implements RunsContract
         private readonly ?Connection $transaction = null,
         private readonly int $retryAfter = 90,
     ) {
-        if ($tries < 1 || $lease < 3) {
-            throw new \InvalidArgumentException('Runs need at least one try and a lease of at least 3 seconds.');
+        if ($tries < 1 || $lease < 3 || $retryAfter < 1) {
+            throw new \InvalidArgumentException(
+                'Runs need at least one try, a lease of at least 3 seconds and a positive queue retry delay.',
+            );
+        }
+        if (!array_is_list($backoff)) {
+            throw new \InvalidArgumentException('A run needs a list of nonnegative whole backoff seconds.');
+        }
+        foreach ($backoff as $seconds) {
+            if (!is_int($seconds) || $seconds < 0) {
+                throw new \InvalidArgumentException('A run needs a list of nonnegative whole backoff seconds.');
+            }
         }
     }
 
@@ -97,6 +108,7 @@ final class Runs implements RunsContract
             $this->backoff,
             $this->lease,
             $transaction,
+            $this->retryAfter,
         );
     }
 
@@ -442,8 +454,16 @@ final class Runs implements RunsContract
         $class = (string) $row['run'];
         $ended = new Cancellation();
         $renewal = $this->renew($id, $claim, $ended);
-        $run = new Execution($id, $this->db, $this->steps, $this->clock, $this->loadSteps($id), $this->table, $claim);
         try {
+            $run = new Execution(
+                $id,
+                $this->db,
+                $this->steps,
+                $this->clock,
+                $this->loadSteps($id),
+                $this->table,
+                $claim,
+            );
             $signature = self::signature($class);
             $given = $signature->given[Run::class];
             $cancellationName = $signature->given[Cancellation::class] ?? null;
@@ -453,7 +473,8 @@ final class Runs implements RunsContract
             if ($cancellationName !== null) {
                 $arguments[$cancellationName] = $cancellation ?? new Cancellation();
             }
-            $result = $job->handle(...$arguments);
+            // A result that cannot be kept fails this try, just as a step's result does.
+            $result = self::encode(['value' => self::plain($job->handle(...$arguments))]);
         } catch (Overtaken) {
             // Another worker has it now: this one keeps nothing more, and tells nothing.
             $ended->cancel();
@@ -469,9 +490,12 @@ final class Runs implements RunsContract
             $ended->cancel();
             $renewal?->cancel();
             if ($error instanceof CancelledException && $cancellation?->isCancelled() === true) {
-                // The worker was told to stop, or lost the job: the run is let go for whoever resumes it next.
-                $this->release($id, $claim);
-                throw $error;
+                if (!$error->getPrevious() instanceof TimedOut) {
+                    // The worker was told to stop, or lost the job: let the next worker resume it.
+                    $this->release($id, $claim);
+                    throw $error;
+                }
+                $error = $error->getPrevious();
             }
             $this->fail($id, $claim, $class, (int) $row['attempts'] + 1, $error);
             return;
@@ -480,7 +504,7 @@ final class Runs implements RunsContract
         $renewal?->cancel();
         $completed = $this->held($id, $claim)->update([
             'status' => Status::Completed->value,
-            'result' => self::encode(['value' => self::plain($result)]),
+            'result' => $result,
             'error' => null,
             'lease_until' => null,
             'claim' => null,

@@ -113,11 +113,13 @@ final readonly class OnboardUser
 
 What `handle()` returns is the run's result, kept with it. A `Cancellation` parameter, as a [job's](https://github.com/crabphp/framework/blob/main/docs/queues.md#a-job-that-takes-too-long), is given by the worker.
 
+The result is kept as JSON, like a step's value. If it cannot be encoded as JSON, that try fails and the run follows its normal retry settings.
+
 ### Steps
 
-`$run->step($name, $work)` runs `$work` once for the run and keeps what it returns. Each time the run is resumed after that, the step returns what was kept, without running `$work`.
+`$run->step($name, $work)` runs `$work` when the step has no kept value and keeps what it returns. Each time the run is resumed after that, the step returns what was kept, without running `$work`.
 
-- **A step's name is unique within its run.** In a loop, put the index in it: `"search.{$i}"`. A name used twice in one try fails the run with a message that says so.
+- **A step's name is unique within its run, across steps, sleeps and signals.** In a loop, put the index in it: `"search.{$i}"`. A name used twice in one try fails the run with a message that says so.
 - **What it returns is kept as JSON,** and handed back as JSON reads it, the first time too: numbers, text, booleans, null and arrays of them. An object comes back as an array of its public properties, so return a date as text, `->format(DATE_ATOM)`, and a record's id rather than the record.
 - **A step that throws is not kept,** and runs again on the run's next try.
 - **A step runs at least once.** A step that finished just before its worker died is run again, as a job would be. Make what it does safe to repeat, as for a [job](https://github.com/crabphp/framework/blob/main/docs/queues.md#jobs-run-at-least-once).
@@ -214,7 +216,7 @@ Because a run is run again from the top, the code between its steps must come ou
 
 ## When a run fails
 
-A try fails when `handle()` throws. The run is tried again after `runs.backoff` seconds, `runs.tries` times in all; each failed try is logged as a warning with its error. When no try is left the run is failed, logged as an error, and kept with its error until it is retried:
+A try fails when `handle()` throws, when its result cannot be kept as JSON, or when it observes its cancellation after the queue times it out. The run is tried again after `runs.backoff` seconds, `runs.tries` times in all; each failed try is logged as a warning with its error. When no try is left the run is failed, logged as an error, and kept with its error until it is retried:
 
 ```sh
 php cua runs:list --status=failed
