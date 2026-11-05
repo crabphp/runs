@@ -90,6 +90,19 @@ final readonly class CancelledRun
     }
 }
 
+final readonly class DistinctNamesRun
+{
+    public function handle(Run $run): array
+    {
+        $values = [];
+        foreach (['quote', 'Quote', 'quóte', 'quote '] as $name) {
+            $values[] = $run->step($name, static fn(): string => $name);
+        }
+        $run->sleep('wait', 1);
+        return $values;
+    }
+}
+
 final readonly class Twice
 {
     public function handle(Run $run): void
@@ -367,6 +380,40 @@ final class RunsTest extends TestCase
         $this->work();
 
         self::assertSame(['answers' => ['SEA 1'], 'approved' => 'yes'], $this->runs->find($id)?->result);
+    }
+
+    public function testStepNamesKeepTheirCaseAccentsAndTrailingSpacesAcrossResumptions(): void
+    {
+        $id = $this->runs->start(DistinctNamesRun::class);
+        $this->work();
+        $this->clock->advance('+1 second');
+        $this->work();
+
+        self::assertSame(Status::Completed, $this->runs->find($id)?->status);
+        self::assertSame(['quote', 'Quote', 'quóte', 'quote '], $this->runs->find($id)?->result);
+    }
+
+    public function testTheReadmeUpgradePreservesExistingSignals(): void
+    {
+        if ($this->db->driver() === 'mysql') {
+            $this->db->execute('ALTER TABLE run_steps MODIFY name VARCHAR(191) NOT NULL');
+        }
+        $id = $this->runs->start(AwaitedRun::class);
+        $this->runs->signal($id, 'approval', ['approved' => true]);
+        preg_match(
+            '/\x60{3}php\n(\$db = \$schema->connection\(\);.*?)\n\x60{3}/s',
+            file_get_contents(__DIR__ . '/../README.md'),
+            $sample,
+        );
+        $file = $this->directory . '/upgrade.php';
+        file_put_contents($file, "<?php\n" . $sample[1]);
+        $schema = new Schema($this->db);
+
+        require $file;
+        $this->work();
+
+        self::assertSame(Status::Completed, $this->runs->find($id)?->status);
+        self::assertSame(['approved' => true], $this->runs->find($id)?->result);
     }
 
     public function testLatestGivesEachRunItsOwnStepsAsFindDoes(): void

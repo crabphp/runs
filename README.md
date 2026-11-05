@@ -85,6 +85,19 @@ php cua runs:install         # writes the runs and run_steps tables' migration i
 php cua migrate
 ```
 
+If you already have the runs tables from framework 0.5.0, keep them and their migrations. The package uses the same tables. A table from an earlier framework version also needs the nullable `claim` column described in [the 0.5.0 changelog](https://github.com/crabphp/framework/blob/main/CHANGELOG.md#050--2026-11-05).
+
+On MySQL, an existing steps table needs byte-for-byte name comparisons. Add a migration whose `up()` contains this, using your `runs.steps` table name if it differs:
+
+```php
+$db = $schema->connection();
+if ($db->driver() === 'mysql') {
+    $db->execute('ALTER TABLE `run_steps` MODIFY `name` VARBINARY(191) NOT NULL');
+}
+```
+
+New migrations from `runs:install` include it. This preserves the existing names and makes names differing in case, accents or trailing spaces distinct. It cannot recover results already shared under names the old collation treated as equal. SQLite needs no change.
+
 A queue worker carries runs out: the queue's workers `php cua start` runs with `QueuePlugin` listed, or `php cua queue:work`. See [Running the worker](https://github.com/crabphp/framework/blob/main/docs/queues.md#running-the-worker).
 
 ## Writing a run

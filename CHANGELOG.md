@@ -4,6 +4,8 @@ Crab Runs follows [semantic versioning](https://semver.org). Before 1.0, a minor
 
 ## Unreleased
 
+- **Step names compare byte for byte on MySQL (migration required):** the default text collation could make `quote`, `Quote` and `quóte` share a kept value. New installations use `VARBINARY(191)` for `run_steps.name`. Existing MySQL tables need the migration in [Installation](README.md#installation); SQLite needs no change.
+- **Generated migrations keep table names intact:** `runs:install` checks settings before writing and quotes configured table names as PHP literals.
 - **A failed read ends its lease renewal:** loading a run's steps is inside its try, so a database error cannot leave a task renewing the run after its job has ended.
 - **A signal cannot replace a running step's value:** a row kept while a step runs is checked for the same kind before its value is returned.
 - **A cooperative queue timeout counts as a failed run try:** it follows `runs.tries` and `runs.backoff`. A worker cancellation still releases the run without consuming a try.

@@ -28,8 +28,9 @@ final readonly class InstallRuns implements Command
 
     public function handle(Input $input, Output $output): int
     {
+        $this->config->check('runs');
         $database = $this->config->get('runs.database');
-        $migrator = $this->migrators->migrator(is_string($database) && $database !== '' ? $database : null);
+        $migrator = $this->migrators->migrator($database);
         $table = (string) $this->config->get('runs.table');
         $steps = (string) $this->config->get('runs.steps');
         $name = "create_{$table}_tables";
@@ -45,6 +46,14 @@ final readonly class InstallRuns implements Command
 
     private static function migration(string $table, string $steps): string
     {
+        $binaryName = var_export(
+            'ALTER TABLE `' . str_replace('`', '``', $steps) . '` MODIFY `name` VARBINARY(191) NOT NULL',
+            true,
+        );
+        // Table names are PHP string literals in the generated file.
+        $table = var_export($table, true);
+        $steps = var_export($steps, true);
+
         return <<<PHP
             <?php
 
@@ -57,7 +66,7 @@ final readonly class InstallRuns implements Command
             return new class implements Migration {
                 public function up(Schema \$schema): void
                 {
-                    \$schema->create('{$table}', function (Table \$table) {
+                    \$schema->create({$table}, function (Table \$table) {
                         \$table->id();
                         // The run's class, and the arguments of its handle() as JSON.
                         \$table->string('run');
@@ -75,7 +84,7 @@ final readonly class InstallRuns implements Command
                         \$table->bigInteger('updated_at');
                         \$table->index(['status', 'id']);
                     });
-                    \$schema->create('{$steps}', function (Table \$table) {
+                    \$schema->create({$steps}, function (Table \$table) {
                         \$table->id();
                         \$table->bigInteger('run_id');
                         // A step's, a sleep's or a signal's name, unique in its run.
@@ -86,12 +95,16 @@ final readonly class InstallRuns implements Command
                         \$table->bigInteger('created_at');
                         \$table->unique(['run_id', 'name']);
                     });
+                    // Names are compared byte for byte, whatever the database's default collation.
+                    if (\$schema->connection()->driver() === 'mysql') {
+                        \$schema->connection()->execute({$binaryName});
+                    }
                 }
 
                 public function down(Schema \$schema): void
                 {
-                    \$schema->drop('{$steps}');
-                    \$schema->drop('{$table}');
+                    \$schema->drop({$steps});
+                    \$schema->drop({$table});
                 }
             };
 
