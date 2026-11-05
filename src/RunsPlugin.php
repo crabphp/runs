@@ -11,7 +11,6 @@ use Crab\Contracts\Database\Database;
 use Crab\Contracts\Plugin;
 use Crab\Contracts\Queue\Queue;
 use Crab\Contracts\Runs\Runs as RunsContract;
-use Crab\Queue\Supervisor;
 use Crab\Runs\Commands\InstallRuns;
 use Crab\Runs\Commands\ListRuns;
 use Crab\Runs\Commands\RecoverRuns;
@@ -58,9 +57,9 @@ final class RunsPlugin implements Plugin
                 'lease' => ['type' => 'integer', 'minimum' => 3],
             ],
         );
-        $container->singleton(Runs::class, static function (Container $container): Runs {
+        $container->singleton(RunsContract::class, static function (Container $container): Runs {
             $config = $container->get(Config::class);
-            $config->check('runs');
+            $config->check('runs', 'queue');
             if (!$container->has(Database::class) || !$container->has(Queue::class)) {
                 throw new \LogicException(
                     'Runs are kept in the database and carried out by queue workers: add QueuePlugin before RunsPlugin in withPlugins(), and keep DatabasePlugin.',
@@ -85,7 +84,7 @@ final class RunsPlugin implements Plugin
                 retryAfter: self::retryAfter($config, is_string($on) ? $on : (string) $config->get('queue.queue')),
             );
         });
-        $container->singleton(RunsContract::class, Runs::class);
+        $container->singleton(Runs::class, RunsContract::class);
         if ($container->has(Console::class)) {
             $console = $container->get(Console::class);
             $console->add('runs:list', ListRuns::class);
@@ -102,12 +101,13 @@ final class RunsPlugin implements Plugin
      */
     private static function retryAfter(Config $config, string $queue): int
     {
-        $longest = (int) Supervisor::retrySettings($config)['retry_after'];
-        foreach (Supervisor::all($config) as $supervisor) {
-            if (!in_array($queue, $supervisor->queues, true)) {
+        $longest = (int) $config->get('queue.retry_after');
+        $default = (string) $config->get('queue.queue');
+        foreach ((array) $config->get('queue.supervisors') as $supervisor) {
+            if (!in_array($queue, $supervisor['queues'] ?? [$default], true)) {
                 continue;
             }
-            $longest = max($longest, $supervisor->retryAfter);
+            $longest = max($longest, (int) ($supervisor['retry_after'] ?? $longest));
         }
         return $longest;
     }

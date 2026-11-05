@@ -7,7 +7,7 @@ namespace Crab\Runs\Commands;
 use Crab\Contracts\Console\Command;
 use Crab\Contracts\Console\Input;
 use Crab\Contracts\Console\Output;
-use Crab\Runs\Runs;
+use Crab\Contracts\Runs\Runs;
 
 final readonly class RetryRun implements Command
 {

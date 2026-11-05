@@ -11,6 +11,8 @@ Crab Runs follows [semantic versioning](https://semver.org). Before 1.0, a minor
 - **A cooperative queue timeout counts as a failed run try:** it follows `runs.tries` and `runs.backoff`. A worker cancellation still releases the run without consuming a try.
 - **A run's result is checked inside its try:** a `handle()` return that cannot be kept as JSON now fails the try under `runs.tries` and `runs.backoff`, instead of leaving the run marked running for the queue to recover.
 - **A transaction keeps the recovery delay:** `within()` preserves the longest queue supervisor's `retry_after` instead of returning to the default delay.
+- **The runs contract covers maintenance and resumption (breaking for custom implementations):** `Contracts\Runs\Runs` declares the service's `latest()`, `recover()` and `resume()` methods. Implementations of the contract add all three; maintenance commands and resumption jobs now ask for the contract, and the concrete service name follows a replacement bound to it.
+- **Value options require a value:** `runs:list` uses `Input::value()` to refuse a bare `--status` or `--limit`, with an example of the expected form.
 - **Standalone settings are checked:** a `Runs` made directly refuses a backoff that is not a list of nonnegative whole seconds.
 
 ## 0.1.0 — 2026-11-05

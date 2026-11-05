@@ -14,12 +14,58 @@ use Crab\Contracts\Database\Migration;
 use Crab\Contracts\Database\Migrator;
 use Crab\Contracts\Database\Migrators;
 use Crab\Contracts\Database\Schema;
+use Crab\Contracts\Runs\Runs;
+use Crab\Contracts\Runs\Status;
 use Crab\Runs\Commands\InstallRuns;
+use Crab\Runs\Commands\ListRuns;
 use Crab\Runs\RunsPlugin;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class CommandsTest extends TestCase
 {
+    /**
+     * @return iterable<string, array{list<string>, string}>
+     */
+    public static function invalidListOptions(): iterable
+    {
+        yield 'bare status' => [['--status'], '--status needs a value; use --status=failed'];
+        yield 'separated status' => [['--status', 'failed'], '--status needs a value; use --status=failed'];
+        yield 'bare limit' => [['--limit'], '--limit needs a value; use --limit=50'];
+        yield 'separated limit' => [['--limit', '10'], '--limit needs a value; use --limit=50'];
+        yield 'missing limit before invalid status' => [
+            ['--status=unknown', '--limit'],
+            '--limit needs a value; use --limit=50',
+        ];
+        yield 'unknown status' => [['--status=unknown'], 'use runs:list --status=failed'];
+        foreach (['', '0', '-1', '1.5', '10runs', '100000', '999999999999999999999999'] as $value) {
+            yield 'limit ' . $value => [['--limit=' . $value], 'use runs:list --limit=50'];
+        }
+    }
+
+    #[DataProvider('invalidListOptions')]
+    public function testListRefusesInvalidOptionsBeforeReadingRuns(array $arguments, string $message): void
+    {
+        $runs = $this->createMock(Runs::class);
+        $runs->expects(self::never())->method('latest');
+
+        [$status, $output] = $this->command(new ListRuns($runs), $arguments);
+
+        self::assertSame(1, $status, $output);
+        self::assertStringContainsString($message, $output);
+    }
+
+    public function testListPassesTheSelectedStatusAndLimit(): void
+    {
+        $runs = $this->createMock(Runs::class);
+        $runs->expects(self::once())->method('latest')->with(Status::Waiting, 10)->willReturn([]);
+
+        [$status, $output] = $this->command(new ListRuns($runs), ['--status=waiting', '--limit=10']);
+
+        self::assertSame(0, $status, $output);
+        self::assertSame("No run is waiting.\n", $output);
+    }
+
     public function testInstallQuotesConfiguredTableNamesInBothDirections(): void
     {
         $tables = ["team's_runs", "team's_steps`\\archive"];

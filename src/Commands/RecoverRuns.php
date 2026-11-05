@@ -7,7 +7,7 @@ namespace Crab\Runs\Commands;
 use Crab\Contracts\Console\Command;
 use Crab\Contracts\Console\Input;
 use Crab\Contracts\Console\Output;
-use Crab\Runs\Runs;
+use Crab\Contracts\Runs\Runs;
 
 final readonly class RecoverRuns implements Command
 {
@@ -20,8 +20,10 @@ final readonly class RecoverRuns implements Command
         return <<<'TEXT'
             Give a job to each run whose own was lost
             A run pending or sleeping whose time came more than `runs.lease` seconds ago, untouched since, lost
-            its job: its process died before pushing it, or the queue lost it. One left running a lease after
-            its lease ran out had its worker die: that counts as a failed try. Schedule this every minute.
+            its job: its process died before pushing it, or the queue lost it. Recovery of a run left running
+            waits out the longer of its lease and the queue's retry_after, plus another lease, after its
+            lease ran out. A supervisor of the runs' queue may extend retry_after. That counts as a failed
+            try. Schedule this every minute.
             TEXT;
     }
 

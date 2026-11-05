@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Crab\Contracts\Runs;
 
 use Crab\Contracts\Database\Connection;
+use Crab\Engine\Async\Cancellation;
 
 /**
  * Starts runs: work of many steps that goes on from where it was after a
@@ -62,6 +63,13 @@ interface Runs
     public function find(int|string $id): ?RunState;
 
     /**
+     * The latest runs, newest first; of one status when given.
+     *
+     * @return list<RunState>
+     */
+    public function latest(?Status $status = null, int $limit = 50): array;
+
+    /**
      * Tries a failed run again, with all its tries, from the step that
      * failed; or one left running by a worker that died and whose lease
      * has run out.
@@ -72,4 +80,22 @@ interface Runs
      * @return bool Whether it can be, and a worker has been asked to.
      */
     public function retry(int|string $id): bool;
+
+    /**
+     * Gives a job to each pending or sleeping run whose job was lost and
+     * counts a try left running by a worker that is gone.
+     *
+     * @param int $limit The most runs to inspect in each recovery pass.
+     * @return int How many runs were given a job.
+     */
+    public function recover(int $limit = 1000): int;
+
+    /**
+     * Carries a run forward until it ends, sleeps, awaits or fails. A
+     * queue worker calls this; a test may call it to carry a run forward.
+     *
+     * @param Cancellation|null $cancellation Stops the run where it waits, when the worker must.
+     * @param string|null $retry For a retry, the claim the run ended under, '' for none; null to resume it.
+     */
+    public function resume(int|string $id, ?Cancellation $cancellation = null, ?string $retry = null): void;
 }

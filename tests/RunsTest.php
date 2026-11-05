@@ -311,7 +311,7 @@ final class RunsTest extends TestCase
             tries: 2,
             backoff: [30],
         );
-        $container->instance(Runs::class, $this->runs);
+        $container->instance(\Crab\Contracts\Runs\Runs::class, $this->runs);
         $this->consumer = new Consumer($this->store, $container, clock: $this->clock);
     }
 

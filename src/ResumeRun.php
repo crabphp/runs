@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Crab\Runs;
 
+use Crab\Contracts\Runs\Runs;
 use Crab\Engine\Async\Cancellation;
 use Crab\Queue\Retry;
 

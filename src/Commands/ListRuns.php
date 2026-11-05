@@ -7,8 +7,8 @@ namespace Crab\Runs\Commands;
 use Crab\Contracts\Console\Command;
 use Crab\Contracts\Console\Input;
 use Crab\Contracts\Console\Output;
+use Crab\Contracts\Runs\Runs;
 use Crab\Contracts\Runs\Status;
-use Crab\Runs\Runs;
 
 final readonly class ListRuns implements Command
 {
@@ -22,7 +22,7 @@ final readonly class ListRuns implements Command
             List the latest runs and where each is
             Options:
               --status=failed   Only those in one state: pending, running, sleeping, waiting, completed or failed
-              --limit=50        How many, the newest first
+              --limit=50        How many, from 1 to 99999, the newest first
 
             A failed run is tried again with `runs:retry`.
             TEXT;
@@ -30,18 +30,19 @@ final readonly class ListRuns implements Command
 
     public function handle(Input $input, Output $output): int
     {
-        $given = $input->option('status');
-        $status = is_string($given) ? Status::tryFrom($given) : null;
-        if (is_string($given) && $status === null) {
+        $given = $input->value('status', 'failed');
+        $limit = $input->value('limit', '50') ?? '50';
+        $status = $given === null ? null : Status::tryFrom($given);
+        if ($given !== null && $status === null) {
             $output->error(
-                "\"{$given}\" is no state of a run: "
-                    . implode(', ', array_map(static fn(Status $status): string => $status->value, Status::cases())),
+                '--status takes '
+                . implode(', ', array_map(static fn(Status $status): string => $status->value, Status::cases()))
+                . '; use runs:list --status=failed.',
             );
             return 1;
         }
-        $limit = $input->option('limit', '50');
-        if (!is_string($limit) || preg_match('/^[1-9][0-9]{0,4}$/D', $limit) !== 1) {
-            $output->error('--limit is how many runs to list: a whole number from 1.');
+        if (preg_match('/^[1-9][0-9]{0,4}$/D', $limit) !== 1) {
+            $output->error('--limit takes a whole number from 1 to 99999; use runs:list --limit=50.');
             return 1;
         }
         $runs = $this->runs->latest($status, (int) $limit);

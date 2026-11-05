@@ -209,7 +209,11 @@ One worker runs a run at a time. It holds a lease on it, renewed every third of 
 
 ### A run whose job was lost
 
-Each of those resumptions is a job on the queue. A run's state is kept first and its job pushed after, so a process that dies between the two, or a queue that loses the job, leaves the run without one: pending, or sleeping past its end, with nothing to carry it on. `runs:recover` gives each such run a job again, once its time came more than `runs.lease` seconds ago. A run still marked running whose worker stopped, with no job taking it up, had its worker die: it counts that as a failed try, and the run is tried again after its backoff, or failed when no try is left. It waits for that until the queue would have given the worker's job to another (`queue.retry_after` after its lease ran out, or a longer `retry_after` of a supervisor that takes from the runs' queue) and that one has had a lease to take the run over, so a worker that only stalled is not counted dead. Schedule it:
+Each resumption is a job on the queue. If the queue keeps jobs in the same database, starting a run stores its row and job in one transaction. Other pushes follow the state change: a process that dies between the two, or a queue that loses the job, can leave a run pending or asleep past its end with nothing to carry it on. `runs:recover` gives it a job again once its time came more than `runs.lease` seconds ago.
+
+Recovery also counts a failed try for a run left running by a worker that stopped, with no job taking it up. It waits until the run's lease has expired, then the greater of `runs.lease` and the queue's `retry_after`, then one more lease. A supervisor that takes from the runs' queue can extend that `retry_after`. This gives the queue time to hand the job to another worker before recovery counts the try. The run is then tried again after its backoff, or failed when no try is left.
+
+Add `Crab\Schedule\SchedulePlugin` to `withPlugins()` and declare this in your setup through `Crab\Contracts\Schedule\Schedule`:
 
 ```php
 $schedule->command('runs:recover')->everyMinute()->onOneServer();
@@ -255,6 +259,8 @@ php cua runs:list --status=waiting --limit=10
 | `attempts` | Tries failed since it was started or retried |
 | `steps` | The names of the steps, sleeps and signals done, in order |
 | `data`, `run`, `createdAt`, `updatedAt` | What it was started with, its class, and when |
+
+`$runs->latest($status, $limit)` returns the newest runs, optionally filtered by status. The `runs:list` command uses the same operation.
 
 ## In AI applications
 
