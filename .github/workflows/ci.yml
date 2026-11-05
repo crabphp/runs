@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MYSQL_DATABASE: crab_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    defaults:
+      run:
+        working-directory: runs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: runs
+      # composer.json reads crabphp/framework from ../framework until there is a release.
+      - uses: actions/checkout@v4
+        with:
+          repository: crabphp/framework
+          path: framework
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pcntl, posix, sockets, pdo_sqlite, pdo_mysql
+          coverage: none
+      - run: composer install --no-interaction --no-progress
+      - run: composer format:check
+      - run: composer lint
+      # Once on SQLite, then on MySQL, as each holds and fences a run in its own way.
+      - run: vendor/bin/phpunit
+      - run: vendor/bin/phpunit
+        env:
+          CRAB_TEST_MYSQL_DSN: 'mysql:host=127.0.0.1;port=3306;dbname=crab_test;charset=utf8mb4'
+          CRAB_TEST_MYSQL_USER: root
+          CRAB_TEST_MYSQL_PASSWORD: ''

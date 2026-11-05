@@ -1,0 +1,42 @@
+{
+    "name": "crabphp/runs",
+    "description": "Durable runs for the Crab framework: work of many steps that goes on from where it was, across crashes, deploys and days of waiting",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.4",
+        "crabphp/framework": "@dev"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^13.4",
+        "carthage-software/mago": "1.57.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Crab\\Runs\\": "src/",
+            "Crab\\Contracts\\Runs\\": "contracts/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Crab\\Runs\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "@php vendor/bin/phpunit",
+        "format": "@php vendor/bin/mago fmt",
+        "format:check": "@php vendor/bin/mago fmt --check",
+        "lint": "@php vendor/bin/mago lint"
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../framework",
+            "options": {
+                "symlink": true
+            }
+        }
+    ],
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
