@@ -29,6 +29,8 @@ A run is work of many steps that goes on from where it was. A crash, a deploy or
 Use a run for work that is too long or too fragile for one job: an AI agent that plans, searches and writes a report, an onboarding that sends a mail today and another in three days, an order that waits for a person to approve it.
 
 ```php
+use Crab\Contracts\Runs\Run;
+
 final readonly class ResearchTopic
 {
     public function __construct(private Llm $llm, private Search $search)
@@ -58,7 +60,7 @@ Runs are kept in two tables of your database and carried out by [queue](https://
 
 ## Installation
 
-Require the package beside the framework:
+Require the package beside framework 0.6.x:
 
 ```sh
 composer require crabphp/runs
@@ -68,19 +70,25 @@ Runs are a plugin that needs the queue's. Add both in `app.php`, the queue first
 
 ```php
 // app.php
+use App\Setup;
+use Crab\App;
 use Crab\Queue\QueuePlugin;
 use Crab\Runs\RunsPlugin;
 
-->withPlugins([
-    QueuePlugin::class,
-    RunsPlugin::class,
-])
-->withSetup(Setup::class)
+return App::configure(__DIR__)
+    ->withPlugins([
+        QueuePlugin::class,
+        RunsPlugin::class,
+    ])
+    ->withSetup(Setup::class)
+    ->create();
 ```
 
-Then write the migration for their tables and run it:
+With the default database queue, write both the queue and runs migrations and run them:
 
 ```sh
+set -e
+php cua queue:install        # writes the jobs table migration if it is not there
 php cua runs:install         # writes the runs and run_steps tables' migration into your migrations
 php cua migrate
 ```
@@ -105,6 +113,7 @@ A queue worker carries runs out: the queue's workers `php cua start` runs with `
 A run is a class with `handle()`, as a job is: services in its constructor, its data as typed parameters of `handle()`. It also takes a `Crab\Contracts\Runs\Run`, which is how it keeps what it does:
 
 ```php
+use Crab\Contracts\Database\Database;
 use Crab\Contracts\Runs\Run;
 
 final readonly class OnboardUser
@@ -155,6 +164,10 @@ if ($decision['approved'] !== true) {
 Give it from anywhere, with the run's id, such as an action:
 
 ```php
+use Crab\Contracts\Runs\Runs;
+use Crab\Validation\Data;
+use Crab\Validation\Fields;
+
 final readonly class ApproveResearch
 {
     public function __construct(private Runs $runs)
@@ -187,6 +200,8 @@ The data is given by the names of `handle()`'s parameters, and checked against t
 `within()` starts the run with a write made in a transaction: the run exists when the write is committed, and not at all when it is rolled back.
 
 ```php
+use Crab\Contracts\Database\Connection;
+
 $this->db->transaction(function (Connection $db) use ($user): void {
     $db->table('users')->where('id', $user->id)->update(['plan' => 'pro']);
     $this->runs->within($db)->start(OnboardUser::class, userId: $user->id);
@@ -257,7 +272,7 @@ php cua runs:list --status=waiting --limit=10
 | `result` | What `handle()` returned, once completed |
 | `error` | Why the last try failed |
 | `attempts` | Tries failed since it was started or retried |
-| `steps` | The names of the steps, sleeps and signals done, in order |
+| `steps` | Names in the order they were stored, including sleeps still waiting and signals sent before their await |
 | `data`, `run`, `createdAt`, `updatedAt` | What it was started with, its class, and when |
 
 `$runs->latest($status, $limit)` returns the newest runs, optionally filtered by status. The `runs:list` command uses the same operation.
@@ -355,6 +370,7 @@ See [Waiting for a signal](#waiting-for-a-signal).
 The browser that started a run may watch it with a generator action that follows the run's state. The run goes on whether anyone watches or not, so the page may be closed and opened again:
 
 ```php
+use Crab\Contracts\Http\Request;
 use Crab\Contracts\Runs\Runs;
 use Crab\Contracts\Runs\Status;
 use Crab\Engine\Async\Async;
@@ -402,15 +418,26 @@ It reads the run once a second, which is cheap at the scale of a person watching
 
 Everything has a default. To change one, add `config/runs.php`:
 
+```php
+// config/runs.php
+return [
+    'tries' => 5,
+    'backoff' => [10, 60, 300],
+    'lease' => 120,
+];
+```
+
+`config:publish` does not publish package settings. `RunsPlugin` checks this section when the application starts and when the service is made. `runs:install` checks it before writing a migration.
+
 | Setting | Default | |
 | --- | --- | --- |
 | `runs.table` | `runs` | The runs' table |
 | `runs.steps` | `run_steps` | The table of their steps |
 | `runs.database` | `null` | The name of the database they are in; the default one when null |
 | `runs.queue` | `null` | The queue their work is pushed to; `queue.queue` when null |
-| `runs.tries` | `3` | How many times a run is tried before it is failed |
-| `runs.backoff` | `[10, 60]` | Seconds before the second try, the third, and so on; the last repeats |
-| `runs.lease` | `90` | Seconds a worker's hold on a run lasts unless renewed |
+| `runs.tries` | `3` | The failed-try limit, at least 1; sleeps and awaits do not consume it |
+| `runs.backoff` | `[10, 60]` | A list of nonnegative whole seconds before retries; the last repeats, and an empty list waits zero seconds |
+| `runs.lease` | `90` | Whole seconds a worker's hold on a run lasts unless renewed, at least 3 |
 
 ## In tests
 

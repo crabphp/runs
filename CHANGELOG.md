@@ -14,6 +14,7 @@ Crab Runs follows [semantic versioning](https://semver.org). Before 1.0, a minor
 - **The runs contract covers maintenance and resumption (breaking for custom implementations):** `Contracts\Runs\Runs` declares the service's `latest()`, `recover()` and `resume()` methods. Implementations of the contract add all three; maintenance commands and resumption jobs now ask for the contract, and the concrete service name follows a replacement bound to it.
 - **Value options require a value:** `runs:list` uses `Input::value()` to refuse a bare `--status` or `--limit`, with an example of the expected form.
 - **Standalone settings are checked:** a `Runs` made directly refuses a backoff that is not a list of nonnegative whole seconds.
+- **Framework 0.6 coverage:** CI checks 0.6.0, 0.6.1 and main on SQLite and MySQL. The README shows the full plugin setup, the queue migration and package configuration.
 
 ## 0.1.0 — 2026-11-05
 
