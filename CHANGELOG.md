@@ -2,7 +2,7 @@
 
 Crab Runs follows [semantic versioning](https://semver.org). Before 1.0, a minor version may break what an application writes; the entry says what to change.
 
-## Unreleased
+## 0.2.0 — 2026-11-07
 
 - **Step names compare byte for byte on MySQL (migration required):** the default text collation could make `quote`, `Quote` and `quóte` share a kept value. New installations use `VARBINARY(191)` for `run_steps.name`. Existing MySQL tables need the migration in [Installation](README.md#installation); SQLite needs no change.
 - **Generated migrations keep table names intact:** `runs:install` checks settings before writing and quotes configured table names as PHP literals.
