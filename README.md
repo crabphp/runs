@@ -60,7 +60,7 @@ Runs are kept in two tables of your database and carried out by [queue](https://
 
 ## Installation
 
-Require the package beside framework 0.6.x:
+Require the package beside framework 0.7.x:
 
 ```sh
 composer require crabphp/runs

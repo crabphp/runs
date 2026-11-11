@@ -8,7 +8,7 @@ composer lint
 composer test
 ```
 
-Composer reads the framework from `../framework`; keep it on a version satisfying `^0.6` and run `composer install` here.
+Composer reads the framework from `../framework`; keep it on a version satisfying `^0.7` and run `composer install` here.
 
 The suite uses SQLite unless `CRAB_TEST_MYSQL_DSN` is set. To exercise MySQL too, use a dedicated database: the tests drop `runs` and `run_steps`.
 

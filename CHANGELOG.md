@@ -2,6 +2,10 @@
 
 Crab Runs follows [semantic versioning](https://semver.org). Before 1.0, a minor version may break what an application writes; the entry says what to change.
 
+## 0.3.0 — 2026-11-12
+
+- Requires `crabphp/framework` ^0.7, for its 0.7.0 release.
+
 ## 0.2.0 — 2026-11-07
 
 - **Step names compare byte for byte on MySQL (migration required):** the default text collation could make `quote`, `Quote` and `quóte` share a kept value. New installations use `VARBINARY(191)` for `run_steps.name`. Existing MySQL tables need the migration in [Installation](README.md#installation); SQLite needs no change.
